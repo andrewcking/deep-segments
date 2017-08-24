@@ -82,6 +82,9 @@ class GUI:
 
     #number of times the canvas has been scaled
     times_scaled = 0
+
+    # are we supposed to be giving suggestions?
+    give_suggestions = True
     """
     MOUSE AND VIEW VARIABLES
     """
@@ -404,7 +407,6 @@ class GUI:
                     color = self.hex_to_rgb(self.label_colors[which_color])
                     color = tuple(reversed(color))
                     color = list(color)
-                    color += (255,)
                     self.color_superpixel(y_image_offset,x_image_offset,color)
                     self.zoom_image()
 
@@ -453,6 +455,7 @@ class GUI:
             color = '#%02x%02x%02x' % color
             self.label_colors.append(color)
         print(self.label_colors)
+
     def new_image(self, file_string):
         path = file_string
         img = Image.open(path)
@@ -516,9 +519,9 @@ class GUI:
             #size = (int(img.shape[1] / 2), int(img.shape[0] / 2))
             self.mat_original = img #cv2.resize(img, size, interpolation=cv2.INTER_AREA)
             self.mat_annotated = self.mat_original[:, :].copy()
-            self.mat_mask = np.zeros((self.mat_original.shape[0],self.mat_original.shape[1],4), dtype=np.uint8)
+            self.mat_mask = np.zeros((self.mat_original.shape[0],self.mat_original.shape[1],self.mat_original.shape[2]), dtype=np.uint8)
             #set the mask to white but transparent
-            self.mat_mask[:] = (255, 255, 255, 0)
+            self.mat_mask[:] = (255, 255, 255)
 
             rgb = cv2.cvtColor(self.mat_original, cv2.COLOR_BGR2RGB)
             d2_image = Image.fromarray(rgb)
@@ -649,14 +652,13 @@ class GUI:
                 color = list(color)
                 color = tuple(reversed(color))
                 color = [int(x * 255) for x in color]
-                color.append(255)
                 self.color_superpixel(int(i[1]), int(i[0]), color)
                 # print(i[2],color)
                 # cv2.circle(self.mat_annotated, (int(i[0] / 2), int(i[1] / 2)), 5, color, cv2.FILLED, 8, 0)
                 # cv2.circle(self.mat_mask, (int(i[0] / 2), int(i[1] / 2)), 5, color, cv2.FILLED, 8, 0)
             if self.cleanup != []:
                 for x in self.cleanup:
-                    self.color_superpixel(x[0], x[1], (255, 255, 255, 0))
+                    self.color_superpixel(x[0], x[1], (255, 255, 255))
             self.zoom_image()
 
     """
@@ -681,8 +683,57 @@ class GUI:
             self.redraw_boundary()
 
             self.read_in_annotations()
+            if self.give_suggestions:
+                self.mark_suggestions(numSegments)
             self.zoom_image()
 
+    def mark_suggestions(self,numSegments):
+        csv = np.genfromtxt('histograms.txt',np.float32, delimiter=",")
+        print(csv[0])
+        for i in range(0, numSegments):
+            mask = np.zeros((self.segments.shape[0], self.segments.shape[1]), dtype=np.uint8)
+            locs = np.argwhere(self.segments == i)
+            if len(locs) > 0:
+                for i in locs:
+                    mask[i[0], i[1]] = 255
+
+                # get the blue green and red histograms and concat them for the image
+                histb = cv2.calcHist([self.mat_original], [0], mask, [256], [0, 256])
+                histg = cv2.calcHist([self.mat_original], [1], mask, [256], [0, 256])
+                histr = cv2.calcHist([self.mat_original], [2], mask, [256], [0, 256])
+                hist = np.concatenate((histb, histg, histr))
+
+                maxval = 0
+                maxval_index = -1
+                # compare the histogram to our other histogram and find closest match (highest intersection) (76800 would be maximum correlation 100(beta/max value)*256*3)
+                for x in range (0,11):
+                    correlation = cv2.compareHist(hist, csv[x], cv2.HISTCMP_CORREL)
+                    if correlation > maxval:
+                        maxval = correlation
+                        maxval_index = x
+
+                # if above correlation threshold: color it
+                xy = locs[0]
+                if maxval > .84:
+                    color = self.hex_to_rgb(self.label_colors[maxval_index])
+                    color = tuple(reversed(color))
+                    color = list(color)
+
+
+                    label = self.segments[xy[0], xy[1]]
+                    locs = np.argwhere(self.segments == label)
+                    if list(self.mat_mask[xy[0], xy[1]]) == [255, 255, 255]:
+                        for i in locs:
+                            currentBGR = self.mat_original[i[0], i[1]]
+                            newB = currentBGR[0] + (color[0] - currentBGR[0]) * .8
+                            newG = currentBGR[1] + (color[1] - currentBGR[1]) * .8
+                            newR = currentBGR[2] + (color[2] - currentBGR[2]) * .8
+                            new_color = (newB,newG,newR)
+                            self.mat_mask[i[0],i[1]] = color
+                            self.mat_annotated[i[0], i[1]] = new_color[0:3]
+
+        self.redraw_boundary()
+                #self.color_superpixel(xy[0], xy[1],color, True)
     def color_superpixel(self, x, y, color):
         # we have to reverse since OPENCV is BGR
         # if that area is already the right color, do nothing
@@ -690,24 +741,24 @@ class GUI:
 
         label = self.segments[x,y]
         locs = np.argwhere(self.segments == label)
-        if list(self.mat_mask[x,y]) == [255,255,255,0]:
+        if list(self.mat_mask[x,y]) == [255,255,255]:
             for i in locs:
                 self.mat_mask[i[0],i[1]] = color
                 self.mat_annotated[i[0],i[1]] = color[0:3]
         # If the the color passed in is white then we are clearing
-        elif color == (255,255,255,0):
+        elif color == (255,255,255):
             for i in locs:
                 self.mat_mask[i[0],i[1]] = color
                 self.mat_annotated[i[0],i[1]] = self.mat_original[i[0],i[1]]
         else:
-            # if its already colored and we have a new color
-            if list(self.mat_mask[x,y]) != color:
-                # then it has been marked before as a different color, remove
-                print("WE MAY NEED TO SEGMENT MORE", x,y)
-                for i in locs:
-                    self.mat_mask[i[0], i[1]] = color
-                    self.mat_annotated[i[0], i[1]] = color[0:3]
-                self.cleanup.append([x,y])
+                # if its already colored and we have a new color
+                if list(self.mat_annotated[x,y]) != color:
+                    # then it has been marked before as a different color, remove
+                    print("WE MAY NEED TO SEGMENT MORE", x,y)
+                    for i in locs:
+                        self.mat_mask[i[0], i[1]] = color
+                        self.mat_annotated[i[0], i[1]] = color[0:3]
+                    self.cleanup.append([x,y])
         self.redraw_boundary()
 
     def redraw_boundary(self):
