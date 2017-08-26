@@ -1,24 +1,30 @@
 import colorsys
-from tkinter import *
-from tkinter import ttk
-
-from PIL import ImageTk, Image
-from tkinter import filedialog as fd
-import sys
-import os
 import gc
-import PIL._tkinter_finder # super random but pyinstaller needs this to compile
+import ntpath
+import os
+import pickle
+import sys
+import time
+from tkinter import *
+from tkinter import filedialog as fd
+
 import cv2
 import numpy as np
-import time
-import matplotlib
-import ntpath
-
-from skimage.segmentation import slic
-# from skimage.segmentation import felzenszwalb
-# from skimage.segmentation import mark_boundaries
+from PIL import ImageTk, Image
+from scipy import ndimage as ndi
+from skimage.filters import gabor_kernel
+from skimage.segmentation import felzenszwalb
 from skimage.segmentation import find_boundaries
+from skimage.segmentation import slic
 
+# HIDDEN IMPORTS FOR PYINSTALLER
+from tkinter import ttk
+import PIL._tkinter_finder # super random but pyinstaller needs this to compile
+import matplotlib
+import sklearn.neighbors.typedefs
+import sklearn
+import sklearn.ensemble
+import sklearn.tree._utils
 
 
 # to make mac app
@@ -123,6 +129,11 @@ class GUI:
 
         self.generate_colors_classes()
 
+
+        # load random forests model
+
+        with open(self.resource_path('ranfor.pkl'), 'rb') as pickle_file:
+            self.ran_for = pickle.load(pickle_file)
         """
         LAYOUT SETUP
         """
@@ -184,6 +195,15 @@ class GUI:
         z_out_label = Label(label_frame, text="Zoom Out", bg=self.dark_alt_bgcolor, fg="white")
         z_out_label.config(font=(None, 10))
         z_out_label.pack(side=RIGHT, padx=(0, 5))
+        z_out_label = Label(label_frame, text="Graph Cuts", bg=self.dark_alt_bgcolor, fg="white")
+        z_out_label.config(font=(None, 10))
+        z_out_label.pack(side=RIGHT, padx=(0, 10))
+        z_out_label = Label(label_frame, text="SLIC", bg=self.dark_alt_bgcolor, fg="white")
+        z_out_label.config(font=(None, 10))
+        z_out_label.pack(side=RIGHT, padx=(0, 5))
+        z_out_label = Label(label_frame, text="Annotation Suggestions", bg=self.dark_alt_bgcolor, fg="white")
+        z_out_label.config(font=(None, 10))
+        z_out_label.pack(side=RIGHT, padx=(0, 10))
 
 
 
@@ -245,13 +265,31 @@ class GUI:
         self.zoom_in_image = ImageTk.PhotoImage(file=self.resource_path("images/zoomin.png"))
         zoom_in = Button(self.buttons_frame, image=self.zoom_in_image, width=18, height=18, borderwidth=0, relief=FLAT)
         zoom_in.config(command=self.zoom_in_call)
-        zoom_in.pack(padx=20, pady=(0, 10), side=RIGHT)
+        zoom_in.pack(padx=30, pady=(0, 10), side=RIGHT)
 
         # Zoom out
         self.zoom_out_image = ImageTk.PhotoImage(file=self.resource_path("images/zoomout.png"))
         zoom_out = Button(self.buttons_frame, image=self.zoom_out_image, width=18, height=18, borderwidth=0, relief=FLAT)
         zoom_out.config(command=self.zoom_out_call)
         zoom_out.pack(padx=0, pady=(0, 10), side=RIGHT)
+
+        # SLIC or GRAPH CUTS
+        self.which_method = IntVar()
+        self.which_method.set(1)
+        graph_button = Radiobutton(self.buttons_frame, variable=self.which_method, value=2, background=self.advanced_color)
+        graph_button.pack(side=RIGHT, padx=(30, 50),pady=(0, 10))
+
+        slic_button = Radiobutton(self.buttons_frame, variable=self.which_method, value=1, background=self.advanced_color)
+        slic_button.pack(side=RIGHT, padx=0,pady=(0, 10))
+
+        # Annotation Suggestions?
+        self.var = IntVar()
+        self.var.set(1)
+        c = Checkbutton(self.buttons_frame, variable=self.var,bg=self.advanced_color)
+        c.pack(padx=60, pady=(0, 10), side=RIGHT)
+
+
+
 
         self.splash_image = ImageTk.PhotoImage(file=self.resource_path("images/splash.png"))
         self.disp_image(self.splash_image)
@@ -520,7 +558,7 @@ class GUI:
             self.mat_original = img #cv2.resize(img, size, interpolation=cv2.INTER_AREA)
             self.mat_annotated = self.mat_original[:, :].copy()
             self.mat_mask = np.zeros((self.mat_original.shape[0],self.mat_original.shape[1],self.mat_original.shape[2]), dtype=np.uint8)
-            #set the mask to white but transparent
+            #set the mask to white
             self.mat_mask[:] = (255, 255, 255)
 
             rgb = cv2.cvtColor(self.mat_original, cv2.COLOR_BGR2RGB)
@@ -661,79 +699,6 @@ class GUI:
                     self.color_superpixel(x[0], x[1], (255, 255, 255))
             self.zoom_image()
 
-    """
-    COMPUTER VISION METHODS
-    """
-    def run_analysis(self):
-        if not self.splash:
-            self.toggle = True
-            self.is_new = False
-            self.cleanup = []
-            # loop over the number of segments
-            numSegments = 280+(self.size_adjust*10)
-            # apply SLIC and extract (approximately) the supplied number
-            # of segments
-            self.segments = slic(self.mat_original,  min_size_factor=.3,compactness=12, n_segments=numSegments, sigma=2)
-            """MIN SIZE NEEDS TO BE SCALED"""
-            #self.segments = felzenszwalb(self.mat_original,  scale = 25,min_size=2000,sigma=2)
-
-            # show the output of SLIC
-            #this is used to redraw the boundary
-            self.boundary = find_boundaries(self.segments,mode='thick')
-            self.redraw_boundary()
-
-            self.read_in_annotations()
-            if self.give_suggestions:
-                self.mark_suggestions(numSegments)
-            self.zoom_image()
-
-    def mark_suggestions(self,numSegments):
-        csv = np.genfromtxt('histograms.txt',np.float32, delimiter=",")
-        print(csv[0])
-        for i in range(0, numSegments):
-            mask = np.zeros((self.segments.shape[0], self.segments.shape[1]), dtype=np.uint8)
-            locs = np.argwhere(self.segments == i)
-            if len(locs) > 0:
-                for i in locs:
-                    mask[i[0], i[1]] = 255
-
-                # get the blue green and red histograms and concat them for the image
-                histb = cv2.calcHist([self.mat_original], [0], mask, [256], [0, 256])
-                histg = cv2.calcHist([self.mat_original], [1], mask, [256], [0, 256])
-                histr = cv2.calcHist([self.mat_original], [2], mask, [256], [0, 256])
-                hist = np.concatenate((histb, histg, histr))
-
-                maxval = 0
-                maxval_index = -1
-                # compare the histogram to our other histogram and find closest match (highest intersection) (76800 would be maximum correlation 100(beta/max value)*256*3)
-                for x in range (0,11):
-                    correlation = cv2.compareHist(hist, csv[x], cv2.HISTCMP_CORREL)
-                    if correlation > maxval:
-                        maxval = correlation
-                        maxval_index = x
-
-                # if above correlation threshold: color it
-                xy = locs[0]
-                if maxval > .84:
-                    color = self.hex_to_rgb(self.label_colors[maxval_index])
-                    color = tuple(reversed(color))
-                    color = list(color)
-
-
-                    label = self.segments[xy[0], xy[1]]
-                    locs = np.argwhere(self.segments == label)
-                    if list(self.mat_mask[xy[0], xy[1]]) == [255, 255, 255]:
-                        for i in locs:
-                            currentBGR = self.mat_original[i[0], i[1]]
-                            newB = currentBGR[0] + (color[0] - currentBGR[0]) * .8
-                            newG = currentBGR[1] + (color[1] - currentBGR[1]) * .8
-                            newR = currentBGR[2] + (color[2] - currentBGR[2]) * .8
-                            new_color = (newB,newG,newR)
-                            self.mat_mask[i[0],i[1]] = color
-                            self.mat_annotated[i[0], i[1]] = new_color[0:3]
-
-        self.redraw_boundary()
-                #self.color_superpixel(xy[0], xy[1],color, True)
     def color_superpixel(self, x, y, color):
         # we have to reverse since OPENCV is BGR
         # if that area is already the right color, do nothing
@@ -763,6 +728,127 @@ class GUI:
 
     def redraw_boundary(self):
         self.mat_annotated[np.where(self.boundary == True)] = [0, 0, 255]
+
+    """
+    COMPUTER VISION METHODS
+    """
+
+    def compute_gabor_bank(self, image, kernels):
+        # used to compute gabor filters
+        feats = np.zeros((len(kernels), 2), dtype=np.double)
+        for k, kernel in enumerate(kernels):
+            filtered = ndi.convolve(image, kernel, mode='wrap')
+            feats[k, 0] = filtered.mean()
+            feats[k, 1] = filtered.var()
+        return feats
+
+    def mark_suggestions(self,numSegments):
+        # set patch radii for gabor filter bank
+        small_patch_radius = 15
+        patch_radius = 30
+        large_patch_radius = 50
+
+        # prepare filter bank kernels
+        kernels = []
+        for theta in range(4):
+            theta = theta / 4. * np.pi
+            for sigma in (1, 3):
+                for frequency in (0.05, 0.25):
+                    kernel = np.real(gabor_kernel(frequency, theta=theta, sigma_x=sigma, sigma_y=sigma))
+                    kernels.append(kernel)
+        # for each segment
+        for i in range(0, numSegments):
+            locs = np.argwhere(self.segments == i)
+            # get the segment locations
+
+            # if valid segment (is this neccesary?)
+            if len(locs) > 0:
+                # grayscale image for gabor filters
+                gray_image = cv2.cvtColor(self.mat_original, cv2.COLOR_BGR2GRAY)
+                # get superpixel centroid
+                x_center, y_center = locs.sum(0) / len(locs)
+                # get gabor patches
+                patch = gray_image[int(x_center) - patch_radius:int(x_center) + patch_radius, int(y_center) - patch_radius:int(y_center) + patch_radius]
+                small_patch = gray_image[int(x_center) - small_patch_radius:int(x_center) + small_patch_radius, int(y_center) - small_patch_radius:int(y_center) + small_patch_radius]
+                large_patch = gray_image[int(x_center) - large_patch_radius:int(x_center) + large_patch_radius, int(y_center) - large_patch_radius:int(y_center) + large_patch_radius]
+                # get color patch for histograms
+                color_patch = self.mat_original[int(x_center) - patch_radius:int(x_center) + patch_radius, int(y_center) - patch_radius:int(y_center) + patch_radius]
+                # if we have a valid patch sizes (no empty patches)
+                if patch.shape[0] > 10 and patch.shape[1] > 10 and small_patch.shape[1] > 10 and small_patch.shape[0] > 10 and large_patch.shape[0] > 10 and large_patch.shape[1] > 10:
+                    # get gabor features from 3 patches
+                    gabor = self.compute_gabor_bank(patch, kernels).ravel()
+                    gabor_small = self.compute_gabor_bank(small_patch, kernels).ravel()
+                    gabor_large = self.compute_gabor_bank(large_patch, kernels).ravel()
+                    gabor_all = np.concatenate((gabor, gabor_small, gabor_large))
+
+                    # get the blue green and red histograms and concat them for the image
+                    histb = cv2.calcHist([color_patch], [0], None, [256], [0, 256])
+                    histg = cv2.calcHist([color_patch], [1], None, [256], [0, 256])
+                    histr = cv2.calcHist([color_patch], [2], None, [256], [0, 256])
+                    hist = np.concatenate((histb, histg, histr))
+
+                    # superpixel features
+                    features = np.append(hist, gabor_all)
+
+                    # run prediction and get accuracy
+                    prediction = int(self.ran_for.predict(features.reshape(1, -1)))
+                    accuracy_list = self.ran_for.predict_proba(features.reshape(1, -1))[0]
+                    accuracy = accuracy_list[int(prediction) - 1]
+                    # if above correlation threshold: color it
+                    if accuracy > .6:
+                        # get color based on our prediction
+                        color = self.hex_to_rgb(self.label_colors[int(prediction)-1])
+                        color = tuple(reversed(color))
+                        color = list(color)
+
+                        # get random pixel in our superpixel so we can check its color in the mask
+                        xy = locs[0]
+                        # don't color previously colored squares (given annotations)
+                        if list(self.mat_mask[xy[0], xy[1]]) == [255, 255, 255]:
+                            # color superpixel a transparent shade
+                            for i in locs:
+                                currentBGR = self.mat_original[i[0], i[1]]
+                                newB = currentBGR[0] + (color[0] - currentBGR[0]) * .6
+                                newG = currentBGR[1] + (color[1] - currentBGR[1]) * .6
+                                newR = currentBGR[2] + (color[2] - currentBGR[2]) * .6
+                                new_color = (newB,newG,newR)
+                                self.mat_mask[i[0],i[1]] = color
+                                self.mat_annotated[i[0], i[1]] = new_color[0:3]
+                            # draw filled circle at superpixel centroid
+                            cv2.circle(self.mat_annotated, (int(y_center), int(x_center)), 12, tuple(color), -1)
+
+    def run_analysis(self):
+        if not self.splash:
+            # RESET ANNOTATED AND MASK IMAGES
+            self.mat_annotated = self.mat_original[:, :].copy()
+            self.mat_mask = np.zeros((self.mat_original.shape[0],self.mat_original.shape[1],self.mat_original.shape[2]), dtype=np.uint8)
+            #set the mask to white
+            self.mat_mask[:] = (255, 255, 255)
+
+            self.toggle = True
+            self.is_new = False
+            self.cleanup = []
+            # loop over the number of segments
+            numSegments = 280+(self.size_adjust*10)
+
+            # SEGMENT USING EITHER SLIC OR GRAPH CUTS
+            if self.which_method.get() == 1:
+                self.segments = slic(self.mat_original,  min_size_factor=.3,compactness=12, n_segments=numSegments, sigma=2)
+            else:
+                """MIN SIZE NEEDS TO BE SCALED"""
+                self.segments = felzenszwalb(self.mat_original,  scale = 25,min_size=2000,sigma=2)
+
+            # get boundary
+            self.boundary = find_boundaries(self.segments,mode='thick')
+            # make suggestions
+            if self.var.get():
+                self.mark_suggestions(numSegments)
+            # redraw boundary
+            self.redraw_boundary()
+            # read in previously drawn annotations
+            self.read_in_annotations()
+            # reset the view
+            self.zoom_image()
 
 
 

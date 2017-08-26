@@ -7,7 +7,7 @@ sys.setrecursionlimit(10000)
 a = Analysis(['main.py'],
              pathex=['/Users/Andrew/Documents/PycharmProjects/DeepSegments'],
              binaries=[],
-             datas=[('images/', '.'),('classlabels.txt', '.')],
+             datas=[('buildadds/', '.'),('classlabels.txt', '.'),('ranfor.pkl', '.')],
              hiddenimports=['pywt._extensions._cwt'],
              hookspath=[],
              runtime_hooks=[],
