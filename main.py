@@ -3,8 +3,8 @@ import gc
 import ntpath
 import os
 import pickle
-import sys
 import time
+import platform
 from tkinter import *
 from tkinter import filedialog as fd
 
@@ -25,11 +25,12 @@ import sklearn.neighbors.typedefs
 import sklearn
 import sklearn.ensemble
 import sklearn.tree._utils
-
+import sys
 
 # to make mac app
-# pyinstaller main.spec -i icon.icns --windowed --exclude-module matplotlib
-
+# pyinstaller mac.spec -i icon.icns --windowed
+# to make windows app
+# pyinstaller windows.spec -i icon.ico --windowed
 
 class GUI:
     minwidth = 950
@@ -52,25 +53,16 @@ class GUI:
     tkimg = None
     # stores the counted image so it isn't garbage collected
     test_result = None
-
-    # allows for displaying annotated image
-    img_annotated = None
-
     # keep annotated mat around so we can save it
     mat_annotated = None
     #just the annotations only
     mat_mask = None
     # segments array - 1D array labels are values
     segments = None
-    # keep original around for zooming
+    # keep original around for zooming and changing image options
     mat_original = None
-
-    # stores current filename
-    filename = None
-
-    # this lets us know which pixels to remove if any
-    cleanup = []
-
+    # image that has grey segment lines for toggling
+    mat_original_lined = None
     #boolean array of where boundaries are
     boundary = None
     """
@@ -94,7 +86,6 @@ class GUI:
     """
     MOUSE AND VIEW VARIABLES
     """
-
     # pos of x and y click
     x = 0
     y = 0
@@ -116,24 +107,27 @@ class GUI:
     size_adjust = 0
 
     """
-    LABELCLASS VARIABLES
+    MISC VARIABLES
     """
+    # stores current filename
+    filename = None
+
+    # this lets us know which pixels to remove if any
+    cleanup = []
+
     # array of our different classes
     theclasslabels = []
     # label of classes
     T = None
 
+    # random forests model
+    ran_for = None
 
     def __init__(self, master):
         self.master = master
 
         self.generate_colors_classes()
 
-
-        # load random forests model
-
-        with open(self.resource_path('ranfor.pkl'), 'rb') as pickle_file:
-            self.ran_for = pickle.load(pickle_file)
         """
         LAYOUT SETUP
         """
@@ -211,23 +205,28 @@ class GUI:
         """
         BUTTONS
         """
+        if platform.system() == "Darwin":
+            margins = [10,10,25,30,28,20,30,0]
+        else:
+            margins = [10,20,30,35,28,50,10,15]
+
         # select file
-        self.load_image = ImageTk.PhotoImage(file=self.resource_path("images/load.png"))
+        self.load_image = ImageTk.PhotoImage(file=self.resource_path("load.png"))
         file_pick = Button(self.buttons_frame, image=self.load_image, width=18, height=18, borderwidth=0, relief=FLAT)
         file_pick.config(command=self.pick_file)
-        file_pick.pack(padx=10, side=LEFT, pady=(0, 10))
+        file_pick.pack(padx=margins[0], side=LEFT, pady=(0, 10))
 
         # save file
-        self.save_image = ImageTk.PhotoImage(file=self.resource_path("images/save.png"))
+        self.save_image = ImageTk.PhotoImage(file=self.resource_path("save.png"))
         file_save = Button(self.buttons_frame, image=self.save_image, width=18, height=18, borderwidth=0, relief=FLAT)
         file_save.config(command=self.save_file)
-        file_save.pack(padx=10, side=LEFT, pady=(0, 10))
+        file_save.pack(padx=margins[1], side=LEFT, pady=(0, 10))
 
         # SIZE THRESHOLD
         size_frame = Frame(self.buttons_frame, width=100, height=100, relief=FLAT, bg=self.advanced_color)
-        size_frame.pack(padx=25, side=LEFT, pady=(0, 10))
+        size_frame.pack(padx=margins[2], side=LEFT, pady=(0, 10))
 
-        self.size_m_image = ImageTk.PhotoImage(file=self.resource_path("images/minus.png"))
+        self.size_m_image = ImageTk.PhotoImage(file=self.resource_path("minus.png"))
         dye_m_button = Button(size_frame, image=self.size_m_image, width=18, height=18, borderwidth=0, relief=FLAT)
         dye_m_button.config(command=self.dec_size)
         dye_m_button.pack(side=LEFT)
@@ -235,43 +234,43 @@ class GUI:
         self.size_amount = Label(size_frame, width=2, text=self.size_adjust, bg=self.advanced_color, fg="white")
         self.size_amount.pack(side=LEFT)
 
-        self.size_p_image = ImageTk.PhotoImage(file=self.resource_path("images/plus.png"))
+        self.size_p_image = ImageTk.PhotoImage(file=self.resource_path("plus.png"))
         dye_p_button = Button(size_frame, image=self.size_p_image, width=18, height=18, borderwidth=0, relief=FLAT)
         dye_p_button.config(command=self.inc_size)
         dye_p_button.pack(side=LEFT)
 
         # Class Labels
-        self.list_image = ImageTk.PhotoImage(file=self.resource_path("images/list.png"))
+        self.list_image = ImageTk.PhotoImage(file=self.resource_path("list.png"))
         class_list = Button(self.buttons_frame, image=self.list_image, width=18, height=18, borderwidth=0, relief=FLAT)
         class_list.config(command=self.classlabels_menu)
-        class_list.pack(padx=30, side=LEFT, pady=(0, 10))
+        class_list.pack(padx=margins[3], side=LEFT, pady=(0, 10))
 
         # Run Button
-        self.run_image = ImageTk.PhotoImage(file=self.resource_path("images/run.png"))
+        self.run_image = ImageTk.PhotoImage(file=self.resource_path("run.png"))
         run_button = Button(self.buttons_frame, image=self.run_image, width=18, height=18, borderwidth=0, relief=FLAT)
         # run_button = Button(buttons_frame, text="Analyze", highlightbackground=bgcolor,pady=15,padx=10)
         run_button.config(command=self.run_analysis)
-        run_button.pack(side=RIGHT, padx=28, pady=(0, 10))
+        run_button.pack(side=RIGHT, padx=margins[4], pady=(0, 10))
 
         # Show Detection Cirlces Toggle
-        self.show_hide_image = ImageTk.PhotoImage(file=self.resource_path("images/circle.png"))
+        self.show_hide_image = ImageTk.PhotoImage(file=self.resource_path("circle.png"))
         show_hide = Button(self.buttons_frame, image=self.show_hide_image, width=18, height=18, borderwidth=0, relief=FLAT)
         # show_hide = Button(buttons_frame, text = "Toggle Circles", bg = bgcolor, highlightbackground=bgcolor,pady=5,padx=8)
         show_hide.config(command=self.toggle_image)
-        show_hide.pack(padx=20, pady=(0, 10), side=RIGHT)
+        show_hide.pack(padx=margins[5], pady=(0, 10), side=RIGHT)
 
 
         # Zoom in
-        self.zoom_in_image = ImageTk.PhotoImage(file=self.resource_path("images/zoomin.png"))
+        self.zoom_in_image = ImageTk.PhotoImage(file=self.resource_path("zoomin.png"))
         zoom_in = Button(self.buttons_frame, image=self.zoom_in_image, width=18, height=18, borderwidth=0, relief=FLAT)
         zoom_in.config(command=self.zoom_in_call)
-        zoom_in.pack(padx=30, pady=(0, 10), side=RIGHT)
+        zoom_in.pack(padx=margins[6], pady=(0, 10), side=RIGHT)
 
         # Zoom out
-        self.zoom_out_image = ImageTk.PhotoImage(file=self.resource_path("images/zoomout.png"))
+        self.zoom_out_image = ImageTk.PhotoImage(file=self.resource_path("zoomout.png"))
         zoom_out = Button(self.buttons_frame, image=self.zoom_out_image, width=18, height=18, borderwidth=0, relief=FLAT)
         zoom_out.config(command=self.zoom_out_call)
-        zoom_out.pack(padx=0, pady=(0, 10), side=RIGHT)
+        zoom_out.pack(padx=margins[7], pady=(0, 10), side=RIGHT)
 
         # SLIC or GRAPH CUTS
         self.which_method = IntVar()
@@ -291,10 +290,10 @@ class GUI:
 
 
 
-        self.splash_image = ImageTk.PhotoImage(file=self.resource_path("images/splash.png"))
+        self.splash_image = ImageTk.PhotoImage(file=self.resource_path("splash.png"))
         self.disp_image(self.splash_image)
 
-        self.a_image = ImageTk.PhotoImage(file=self.resource_path("images/splash_mini.png"))
+        self.a_image = ImageTk.PhotoImage(file=self.resource_path("splash_mini.png"))
 
         # SET UP ADVANCED BUTTONS
         self.setup_labelclass_buttons()
@@ -327,14 +326,18 @@ class GUI:
         MOUSE BINDINGS
         """
         self.canvas.bind("<Button 1>", self.grab)
-        self.canvas.bind("<Button 2>", self.drag_right)
-        #self.canvas.bind("<Button 2>", self.flag)
         self.canvas.bind("<B1-Motion>", self.drag)
-        self.canvas.bind("<B2-Motion>", self.drag_right)
+        if platform.system() == "Darwin":
+            self.canvas.bind("<Button 2>", self.drag_right)
+            self.canvas.bind("<B2-Motion>", self.drag_right)
+        else:
+            self.canvas.bind("<Button 3>", self.drag_right)
+            self.canvas.bind("<B3-Motion>", self.drag_right)
         self.canvas.bind("<MouseWheel>", self.zoom)
-
+        root.bind("<space>", self.toggle_image)
         # root.bind("<Button 2>",zoom)
         self.canvas.bind('<Configure>', self.resize_canvas)
+
 
     """
     MOUSE EVENTS
@@ -400,15 +403,17 @@ class GUI:
     def zoom_image(self):
         if self.toggle:
             zoomy_image = self.scale_image(self.mat_annotated, self.scale)
-        else:
+        elif self.is_new:
             zoomy_image = self.scale_image(self.mat_original, self.scale)
+        else:
+            zoomy_image = self.scale_image(self.mat_original_lined, self.scale)
         d_image = zoomy_image
         img_coords = self.canvas.coords(self.image_id)
         zoomimage = d_image
         self.canvas.delete("all")
         d2_image = Image.fromarray(zoomimage)
         d2_image = ImageTk.PhotoImage(image=d2_image)
-        self.test_result = d2_image
+        self.test_result = d2_image # neccesary to prevent garbage collection
         self.image_id = self.canvas.create_image(img_coords[0], img_coords[1], image=d2_image, anchor=CENTER)
 
         gc.collect()
@@ -486,21 +491,13 @@ class GUI:
         self.label_colors = []
         # set up colors
         for i in range(0, len(self.theclasslabels)):
-            color = colorsys.hsv_to_rgb(float((1/len(self.theclasslabels)) * i), float(0.5), float(1.0))
+            color = colorsys.hsv_to_rgb(float((1/len(self.theclasslabels)) * i+.35), float(((.5/len(self.theclasslabels)) * i)+.5), float(1.0))
+
             color = list(color)
             color = [int(x * 255) for x in color]
             color = tuple(color)
             color = '#%02x%02x%02x' % color
             self.label_colors.append(color)
-        print(self.label_colors)
-
-    def new_image(self, file_string):
-        path = file_string
-        img = Image.open(path)
-        img = self.shrink_image(img)
-        self.tkimg = ImageTk.PhotoImage(img)
-        self.img_annotated = self.tkimg
-        self.disp_image(self.tkimg)
 
     def shrink_image(self, s_image):
 
@@ -541,7 +538,6 @@ class GUI:
         self.size_amount.config(text=self.size_adjust)
     # LOAD FILE
     def pick_file(self):
-        print("pick file")
         new_name = fd.askopenfilename()
         # its stupid but we need this or the dialog will come back
         root.withdraw()
@@ -579,22 +575,16 @@ class GUI:
 
     # SAVE FILE
     def save_file(self):
-        print("save file")
-
+        print("Saving File")
         if self.mat_mask is not None:
             cv2.imwrite(self.filename[:-4]+"_mask.png", self.mat_mask)
 
     # TOGGLE CIRCLES
-    def toggle_image(self):
-        print("toggle image")
+    def toggle_image(self, *event):
         if not self.splash:
             if not self.is_new:
                 self.toggle = not self.toggle
-                # disp_image()
-                if self.toggle:
-                    self.zoom_image()
-                else:
-                    self.zoom_image()
+                self.zoom_image()
 
     """
     MENU METHODS
@@ -649,7 +639,7 @@ class GUI:
         self.setup_labelclass_buttons()
 
         # reset image
-        self.splash_image = ImageTk.PhotoImage(file=self.resource_path("images/splash.png"))
+        self.splash_image = ImageTk.PhotoImage(file=self.resource_path("splash.png"))
         self.disp_image(self.splash_image)
         self.splash = True
 
@@ -686,10 +676,13 @@ class GUI:
             csv = np.genfromtxt(path, delimiter='\t')
             self.toggle = True
             for i in csv:
-                color = colorsys.hsv_to_rgb(float(0.09 * (i[2] - 1)), float(0.5), float(1.0))
-                color = list(color)
+                # color = colorsys.hsv_to_rgb(float(0.09 * (i[2] - 1)), float(0.5), float(1.0))
+                # color = list(color)
+                # color = tuple(reversed(color))
+                # color = [int(x * 255) for x in color]
+                color = self.hex_to_rgb(self.label_colors[int(i[2]) -1])
                 color = tuple(reversed(color))
-                color = [int(x * 255) for x in color]
+                color = list(color)
                 self.color_superpixel(int(i[1]), int(i[0]), color)
                 # print(i[2],color)
                 # cv2.circle(self.mat_annotated, (int(i[0] / 2), int(i[1] / 2)), 5, color, cv2.FILLED, 8, 0)
@@ -719,7 +712,7 @@ class GUI:
                 # if its already colored and we have a new color
                 if list(self.mat_annotated[x,y]) != color:
                     # then it has been marked before as a different color, remove
-                    print("WE MAY NEED TO SEGMENT MORE", x,y)
+                    #print("WE MAY NEED TO SEGMENT MORE", x,y)
                     for i in locs:
                         self.mat_mask[i[0], i[1]] = color
                         self.mat_annotated[i[0], i[1]] = color[0:3]
@@ -727,7 +720,7 @@ class GUI:
         self.redraw_boundary()
 
     def redraw_boundary(self):
-        self.mat_annotated[np.where(self.boundary == True)] = [0, 0, 255]
+        self.mat_annotated[np.where(self.boundary == True)] = [255, 0, 0]
 
     """
     COMPUTER VISION METHODS
@@ -807,13 +800,13 @@ class GUI:
                         if list(self.mat_mask[xy[0], xy[1]]) == [255, 255, 255]:
                             # color superpixel a transparent shade
                             for i in locs:
-                                currentBGR = self.mat_original[i[0], i[1]]
-                                newB = currentBGR[0] + (color[0] - currentBGR[0]) * .6
-                                newG = currentBGR[1] + (color[1] - currentBGR[1]) * .6
-                                newR = currentBGR[2] + (color[2] - currentBGR[2]) * .6
-                                new_color = (newB,newG,newR)
+                                # currentBGR = self.mat_original[i[0], i[1]]
+                                # newB = currentBGR[0] + (color[0] - currentBGR[0]) * .6
+                                # newG = currentBGR[1] + (color[1] - currentBGR[1]) * .6
+                                # newR = currentBGR[2] + (color[2] - currentBGR[2]) * .6
+                                # new_color = (newB,newG,newR)
                                 self.mat_mask[i[0],i[1]] = color
-                                self.mat_annotated[i[0], i[1]] = new_color[0:3]
+                                #self.mat_annotated[i[0], i[1]] = new_color[0:3]
                             # draw filled circle at superpixel centroid
                             cv2.circle(self.mat_annotated, (int(y_center), int(x_center)), 12, tuple(color), -1)
 
@@ -842,7 +835,14 @@ class GUI:
             self.boundary = find_boundaries(self.segments,mode='thick')
             # make suggestions
             if self.var.get():
+                if self.ran_for is None:
+                    with open(self.resource_path('ranfor.pkl'), 'rb') as pickle_file:
+                        self.ran_for = pickle.load(pickle_file)
+                # load random forests model
                 self.mark_suggestions(numSegments)
+            # create lined
+            self.mat_original_lined = self.mat_original[:, :].copy()
+            self.mat_original_lined[np.where(self.boundary == True)] = [100, 100, 100]
             # redraw boundary
             self.redraw_boundary()
             # read in previously drawn annotations
@@ -851,9 +851,7 @@ class GUI:
             self.zoom_image()
 
 
-
-
-
+print("Starting DeepSegments - A Segmentation Tool for UGA")
 root = Tk()
 root.minsize(GUI.minwidth, 700)
 root.title("DeepSegments")
