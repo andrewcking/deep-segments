@@ -7,6 +7,8 @@ import time
 import platform
 from tkinter import *
 from tkinter import filedialog as fd
+import threading
+import queue
 
 import cv2
 import numpy as np
@@ -83,6 +85,8 @@ class GUI:
 
     # are we supposed to be giving suggestions?
     give_suggestions = True
+    # is the loading image displaying?
+    loading_image_on = False
     """
     MOUSE AND VIEW VARIABLES
     """
@@ -247,10 +251,10 @@ class GUI:
 
         # Run Button
         self.run_image = ImageTk.PhotoImage(file=self.resource_path("run.png"))
-        run_button = Button(self.buttons_frame, image=self.run_image, width=18, height=18, borderwidth=0, relief=FLAT)
+        self.run_button = Button(self.buttons_frame, image=self.run_image, width=18, height=18, borderwidth=0, relief=FLAT)
         # run_button = Button(buttons_frame, text="Analyze", highlightbackground=bgcolor,pady=15,padx=10)
-        run_button.config(command=self.run_analysis)
-        run_button.pack(side=RIGHT, padx=margins[4], pady=(0, 10))
+        self.run_button.config(command=self.run_analysis)
+        self.run_button.pack(side=RIGHT, padx=margins[4], pady=(0, 10))
 
         # Show Detection Cirlces Toggle
         self.show_hide_image = ImageTk.PhotoImage(file=self.resource_path("circle.png"))
@@ -690,7 +694,7 @@ class GUI:
             if self.cleanup != []:
                 for x in self.cleanup:
                     self.color_superpixel(x[0], x[1], (255, 255, 255))
-            self.zoom_image()
+            #self.zoom_image()
 
     def color_superpixel(self, x, y, color):
         # we have to reverse since OPENCV is BGR
@@ -812,45 +816,76 @@ class GUI:
 
     def run_analysis(self):
         if not self.splash:
-            # RESET ANNOTATED AND MASK IMAGES
-            self.mat_annotated = self.mat_original[:, :].copy()
-            self.mat_mask = np.zeros((self.mat_original.shape[0],self.mat_original.shape[1],self.mat_original.shape[2]), dtype=np.uint8)
-            #set the mask to white
-            self.mat_mask[:] = (255, 255, 255)
 
-            self.toggle = True
-            self.is_new = False
-            self.cleanup = []
-            # loop over the number of segments
-            numSegments = 280+(self.size_adjust*10)
+            self.thread_queue = queue.Queue()
+            self.new_thread = threading.Thread(target=self.analysis_thread) # run the analysis thread
+            self.new_thread.start()
+            self.master.after(100, self.listen_for_result) # call listen for result to finish run
+            self.loading_image = ImageTk.PhotoImage(file=self.resource_path("loading.png"))
+            self.master.after(500,self.loading_anim)
 
-            # SEGMENT USING EITHER SLIC OR GRAPH CUTS
-            if self.which_method.get() == 1:
-                self.segments = slic(self.mat_original,  min_size_factor=.3,compactness=12, n_segments=numSegments, sigma=2)
-            else:
-                """MIN SIZE NEEDS TO BE SCALED"""
-                self.segments = felzenszwalb(self.mat_original,  scale = 25,min_size=2000,sigma=2)
 
-            # get boundary
-            self.boundary = find_boundaries(self.segments,mode='thick')
-            # make suggestions
-            if self.var.get():
-                if self.ran_for is None:
-                    with open(self.resource_path('ranfor.pkl'), 'rb') as pickle_file:
-                        self.ran_for = pickle.load(pickle_file)
-                # load random forests model
-                self.mark_suggestions(numSegments)
-            # create lined
-            self.mat_original_lined = self.mat_original[:, :].copy()
-            self.mat_original_lined[np.where(self.boundary == True)] = [100, 100, 100]
+    def analysis_thread(self):
+        # RESET ANNOTATED AND MASK IMAGES
+        self.mat_annotated = self.mat_original[:, :].copy()
+        self.mat_mask = np.zeros((self.mat_original.shape[0], self.mat_original.shape[1], self.mat_original.shape[2]), dtype=np.uint8)
+        # set the mask to white
+        self.mat_mask[:] = (255, 255, 255)
+
+        self.toggle = True
+        self.is_new = False
+        self.cleanup = []
+        # loop over the number of segments
+        numSegments = 280 + (self.size_adjust * 10)
+
+        # SEGMENT USING EITHER SLIC OR GRAPH CUTS
+        if self.which_method.get() == 1:
+            self.segments = slic(self.mat_original, min_size_factor=.3, compactness=12, n_segments=numSegments, sigma=2)
+        else:
+            """MIN SIZE NEEDS TO BE SCALED"""
+            self.segments = felzenszwalb(self.mat_original, scale=25, min_size=2000, sigma=2)
+
+        # get boundary
+        self.boundary = find_boundaries(self.segments, mode='thick')
+        # make suggestions
+        if self.var.get():
+            if self.ran_for is None:
+                with open(self.resource_path('ranfor.pkl'), 'rb') as pickle_file:
+                    self.ran_for = pickle.load(pickle_file)
+            # load random forests model
+            self.mark_suggestions(numSegments)
+        # create lined
+        self.mat_original_lined = self.mat_original[:, :].copy()
+        self.mat_original_lined[np.where(self.boundary == True)] = [100, 100, 100]
+        # read in previously drawn annotations
+        self.read_in_annotations()
+        self.thread_queue.put(100)
+        self.thread_queue.put(100)
+
+    def listen_for_result(self):
+        try:
+            res = self.thread_queue.get(0)
             # redraw boundary
             self.redraw_boundary()
-            # read in previously drawn annotations
-            self.read_in_annotations()
             # reset the view
             self.zoom_image()
+            print('Thread terminated', res)
+        except queue.Empty:
+            self.master.after(100, self.listen_for_result)
 
-
+    def loading_anim(self):
+        try:
+            res = self.thread_queue.get(0)
+            print("Animation terminated",res)
+            self.run_button.configure(image=self.run_image, width=18, height=18, borderwidth=0, relief=FLAT)
+        except queue.Empty:
+            if self.loading_image_on:
+                self.run_button.configure(image=self.run_image, width=18, height=18, borderwidth=0, relief=FLAT)
+                self.loading_image_on = False
+            else:
+                self.loading_image_on = True
+                self.run_button.configure(image=self.loading_image, width=18, height=18, borderwidth=0, relief=FLAT)
+            self.master.after(300, self.loading_anim)
 print("Starting DeepSegments - A Segmentation Tool for UGA")
 root = Tk()
 root.minsize(GUI.minwidth, 700)
