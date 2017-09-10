@@ -40,14 +40,17 @@ class GUI:
     COLORS
     """
     bgcolor = "#222222"
-    dark_bgcolor = "#323232"
     dark_alt_bgcolor = "#222222"
-    highlight = "#323232"
     error_color = "#931f1f"
     no_error_color = "#2b2b2b"
     advanced_color = "#222222"
     label_colors = []
-
+    if platform.system() == "Darwin":
+        dark_bgcolor = "#323232"
+        highlight = "#323232"
+    else:
+        dark_bgcolor = "#333333"
+        highlight = "#333333"
     """
     IMAGES
     """
@@ -113,6 +116,7 @@ class GUI:
     """
     MISC VARIABLES
     """
+    model_exists = False
     # stores current filename
     filename = None
     # keeps track of expert marked superpixels so the unsupervised doesn't write overthem
@@ -141,7 +145,8 @@ class GUI:
         # the mode for suggesting
         self.suggest_mode = IntVar()
         self.which_method = IntVar()
-
+        self.model_exists = os.path.isfile(self.resource_path('ranfor.pkl'))
+        print(self.model_exists)
         self.load_preferences()
         self.generate_colors_classes()
 
@@ -217,9 +222,10 @@ class GUI:
         z_out_label = Label(label_frame, text="Unsupervised", bg=self.dark_alt_bgcolor, fg="white")
         z_out_label.config(font=(None, 10))
         z_out_label.pack(side=RIGHT, padx=(0, 10))
-        z_out_label = Label(label_frame, text="Supervised", bg=self.dark_alt_bgcolor, fg="white")
-        z_out_label.config(font=(None, 10))
-        z_out_label.pack(side=RIGHT, padx=(0, 10))
+        if self.model_exists:
+            z_out_label = Label(label_frame, text="Supervised", bg=self.dark_alt_bgcolor, fg="white")
+            z_out_label.config(font=(None, 10))
+            z_out_label.pack(side=RIGHT, padx=(0, 10))
 
 
 
@@ -296,8 +302,9 @@ class GUI:
         c.pack(padx=(0,70), pady=(0, 10), side=RIGHT)
         c = Radiobutton(self.buttons_frame, variable=self.suggest_mode, value=1, bg=self.advanced_color, command=self.save_preferences)
         c.pack(padx=40, pady=(0, 10), side=RIGHT)
-        c = Radiobutton(self.buttons_frame, variable=self.suggest_mode, value=2, bg=self.advanced_color, command=self.save_preferences)
-        c.pack(padx=20, pady=(0, 10), side=RIGHT)
+        if self.model_exists:
+            c = Radiobutton(self.buttons_frame, variable=self.suggest_mode, value=2, bg=self.advanced_color, command=self.save_preferences)
+            c.pack(padx=20, pady=(0, 10), side=RIGHT)
 
 
 
@@ -377,6 +384,7 @@ class GUI:
         self.suggest_mode.set(int(self.preferences[0]))
         self.which_method.set(int(self.preferences[2]))
         file.close()
+
     def save_preferences(self):
         if platform.system() == "Darwin":
             homedir = os.path.expanduser('~')
@@ -768,7 +776,6 @@ class GUI:
             if self.cleanup != []:
                 for x in self.cleanup:
                     self.color_superpixel(x[0], x[1], (255, 255, 255))
-            #self.zoom_image()
 
     def color_superpixel(self, x, y, color):
         label = self.segments[x,y]
@@ -966,7 +973,7 @@ class GUI:
         if self.suggest_mode.get() == 1: # if UNSUPERVISED
             self.mark_suggestions_unsupervised(numSegments)
         elif self.suggest_mode.get() == 2: # if SUPERVISED
-            if self.ran_for is None:
+            if self.ran_for is None and self.model_exists:
                 with open(self.resource_path('ranfor.pkl'), 'rb') as pickle_file:
                     self.ran_for = pickle.load(pickle_file)
             # load random forests model
@@ -976,7 +983,7 @@ class GUI:
         self.mat_original_lined = self.mat_original[:, :].copy()
         self.mat_original_lined[np.where(self.boundary == True)] = [100, 100, 100]
         # read in previously drawn annotations
-        self.read_in_annotations()
+        #self.read_in_annotations()
         self.thread_queue.put(100)
         self.thread_queue.put(100)
 
