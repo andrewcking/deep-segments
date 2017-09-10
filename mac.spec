@@ -7,7 +7,7 @@ sys.setrecursionlimit(10000)
 a = Analysis(['main.py'],
              pathex=['/Users/Andrew/Documents/PycharmProjects/DeepSegments'],
              binaries=[],
-             datas=[('loading.png', '.'),('circle.png', '.'),('color.png', '.'),('list.png', '.'),('load.png', '.'),('minus.png', '.'),('plus.png', '.'),('run.png', '.'),('save.png', '.'),('splash_mini.png', '.'),('splash.png', '.'),('zoomin.png', '.'),('zoomout.png', '.'),('libmkl_avx2.dylib', '.'),('libmkl_mc.dylib', '.'),('classlabels.txt', '.'),('ranfor.pkl', '.')],
+             datas=[('loading.png', '.'),('circle.png', '.'),('color.png', '.'),('list.png', '.'),('load.png', '.'),('minus.png', '.'),('plus.png', '.'),('run.png', '.'),('save.png', '.'),('splash_mini.png', '.'),('splash.png', '.'),('zoomin.png', '.'),('zoomout.png', '.'),('libmkl_avx2.dylib', '.'),('libmkl_mc.dylib', '.'),('classlabels.txt', '.'),('preferences.txt', '.'),('ranfor.pkl', '.')],
              hiddenimports=['pywt._extensions._cwt'],
              hookspath=[],
              runtime_hooks=[],

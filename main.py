@@ -18,7 +18,7 @@ from skimage.filters import gabor_kernel
 from skimage.segmentation import felzenszwalb
 from skimage.segmentation import find_boundaries
 from skimage.segmentation import slic
-
+from sklearn.cluster import KMeans
 # HIDDEN IMPORTS FOR PYINSTALLER
 from tkinter import ttk
 import PIL._tkinter_finder # super random but pyinstaller needs this to compile
@@ -108,13 +108,14 @@ class GUI:
     """
     DISPLAY VARIABLES
     """
-    size_adjust = 0
+    num_of_segments = 0
 
     """
     MISC VARIABLES
     """
     # stores current filename
     filename = None
+
 
     # this lets us know which pixels to remove if any
     cleanup = []
@@ -127,9 +128,19 @@ class GUI:
     # random forests model
     ran_for = None
 
+    # unsuperivsed superpixel lists
+    valid_patches = []  # list of which segments we looked at
+    cluster_num = []  # associated cluster number for each segment
+
+    preferences = []
+
     def __init__(self, master):
         self.master = master
+        # the mode for suggesting
+        self.suggest_mode = IntVar()
 
+        self.load_preferences()
+        print(self.preferences)
         self.generate_colors_classes()
 
         """
@@ -171,10 +182,9 @@ class GUI:
         save_label.config(font=(None, 10))
         save_label.pack(side=LEFT, padx=6)
 
-
-        size_t_label = Label(label_frame, text="Segment Size", bg=self.advanced_color, fg="white")
+        size_t_label = Label(label_frame, text="Number of Segs", bg=self.advanced_color, fg="white")
         size_t_label.config(font=(None, 10))
-        size_t_label.pack(side=LEFT, padx=22)
+        size_t_label.pack(side=LEFT, padx=16)
 
         save_label = Label(label_frame, text="Class Labels", bg=self.dark_alt_bgcolor, fg="white")
         save_label.config(font=(None, 10))
@@ -199,10 +209,15 @@ class GUI:
         z_out_label = Label(label_frame, text="SLIC", bg=self.dark_alt_bgcolor, fg="white")
         z_out_label.config(font=(None, 10))
         z_out_label.pack(side=RIGHT, padx=(0, 5))
-        z_out_label = Label(label_frame, text="Annotation Suggestions", bg=self.dark_alt_bgcolor, fg="white")
+        z_out_label = Label(label_frame, text="Manual", bg=self.dark_alt_bgcolor, fg="white")
+        z_out_label.config(font=(None, 10))
+        z_out_label.pack(side=RIGHT, padx=(0, 60))
+        z_out_label = Label(label_frame, text="Unsupervised", bg=self.dark_alt_bgcolor, fg="white")
         z_out_label.config(font=(None, 10))
         z_out_label.pack(side=RIGHT, padx=(0, 10))
-
+        z_out_label = Label(label_frame, text="Supervised", bg=self.dark_alt_bgcolor, fg="white")
+        z_out_label.config(font=(None, 10))
+        z_out_label.pack(side=RIGHT, padx=(0, 10))
 
 
 
@@ -226,28 +241,17 @@ class GUI:
         file_save.config(command=self.save_file)
         file_save.pack(padx=margins[1], side=LEFT, pady=(0, 10))
 
-        # SIZE THRESHOLD
-        size_frame = Frame(self.buttons_frame, width=100, height=100, relief=FLAT, bg=self.advanced_color)
-        size_frame.pack(padx=margins[2], side=LEFT, pady=(0, 10))
-
-        self.size_m_image = ImageTk.PhotoImage(file=self.resource_path("minus.png"))
-        dye_m_button = Button(size_frame, image=self.size_m_image, width=18, height=18, borderwidth=0, relief=FLAT)
-        dye_m_button.config(command=self.dec_size)
-        dye_m_button.pack(side=LEFT)
-
-        self.size_amount = Label(size_frame, width=2, text=self.size_adjust, bg=self.advanced_color, fg="white")
-        self.size_amount.pack(side=LEFT)
-
-        self.size_p_image = ImageTk.PhotoImage(file=self.resource_path("plus.png"))
-        dye_p_button = Button(size_frame, image=self.size_p_image, width=18, height=18, borderwidth=0, relief=FLAT)
-        dye_p_button.config(command=self.inc_size)
-        dye_p_button.pack(side=LEFT)
+        self.segments_value = StringVar()
+        self.segments_value.trace('w', self.limit_size_segment_number)
+        self.segments_entry = Entry(self.buttons_frame, bg="#2b2b2b", width=4, insertbackground="#ffffff", highlightcolor="#2b2b2b", highlightbackground=self.no_error_color, textvariable=self.segments_value, bd=0, fg="white")
+        self.segments_entry.insert(END, int(self.preferences[1]))  #pref 1 is the number of segments saved to prefs
+        self.segments_entry.pack(side=LEFT, padx=35, pady=(0, 10))
 
         # Class Labels
         self.list_image = ImageTk.PhotoImage(file=self.resource_path("list.png"))
         class_list = Button(self.buttons_frame, image=self.list_image, width=18, height=18, borderwidth=0, relief=FLAT)
         class_list.config(command=self.classlabels_menu)
-        class_list.pack(padx=margins[3], side=LEFT, pady=(0, 10))
+        class_list.pack(padx=margins[3], side=LEFT, pady=(0, 15))
 
         # Run Button
         self.run_image = ImageTk.PhotoImage(file=self.resource_path("run.png"))
@@ -278,7 +282,7 @@ class GUI:
 
         # SLIC or GRAPH CUTS
         self.which_method = IntVar()
-        self.which_method.set(1)
+        self.which_method.set(int(self.preferences[0]))
         graph_button = Radiobutton(self.buttons_frame, variable=self.which_method, value=2, background=self.advanced_color)
         graph_button.pack(side=RIGHT, padx=(30, 50),pady=(0, 10))
 
@@ -286,10 +290,14 @@ class GUI:
         slic_button.pack(side=RIGHT, padx=0,pady=(0, 10))
 
         # Annotation Suggestions?
-        self.var = IntVar()
-        self.var.set(1)
-        c = Checkbutton(self.buttons_frame, variable=self.var,bg=self.advanced_color)
-        c.pack(padx=60, pady=(0, 10), side=RIGHT)
+
+        #self.suggest_mode.set(2)
+        c = Radiobutton(self.buttons_frame, variable=self.suggest_mode, value=0, bg=self.advanced_color, command=self.save_preferences)
+        c.pack(padx=(0,70), pady=(0, 10), side=RIGHT)
+        c = Radiobutton(self.buttons_frame, variable=self.suggest_mode, value=1, bg=self.advanced_color, command=self.save_preferences)
+        c.pack(padx=40, pady=(0, 10), side=RIGHT)
+        c = Radiobutton(self.buttons_frame, variable=self.suggest_mode, value=2, bg=self.advanced_color, command=self.save_preferences)
+        c.pack(padx=20, pady=(0, 10), side=RIGHT)
 
 
 
@@ -341,8 +349,51 @@ class GUI:
         root.bind("<space>", self.toggle_image)
         # root.bind("<Button 2>",zoom)
         self.canvas.bind('<Configure>', self.resize_canvas)
+    """
+    PREFERENCES
+    """
+    def load_preferences(self):
+        if platform.system() == "Darwin":
+            homedir = os.path.expanduser('~')
+            my_file = homedir+"/Library/Preferences/DeepSegments/preferences.p"
+            file_exists = os.path.isfile(my_file)
+            if not file_exists:
+                # if the folder doesn't exist create it
+                if not os.path.isdir(homedir+"/Library/Preferences/DeepSegments/"):
+                    os.makedirs(homedir+"/Library/Preferences/DeepSegments/")
+                # if the file doesn't exist create it and default it to the default classes
+                f2 = open(my_file, 'x')
+                default_prefs_file = open(self.resource_path('preferences.txt'))
+                def_prefs = default_prefs_file.readlines()
+                for x in def_prefs:
+                    f2.write(str(x))
+                default_prefs_file.close()
+                f2.close()
+            file = open(my_file)
+        else:
+            file = open(self.resource_path('preferences.txt'))
+
+        self.preferences = file.readlines()
+        self.suggest_mode.set(int(self.preferences[0]))
+        file.close()
+    def save_preferences(self):
+        if platform.system() == "Darwin":
+            homedir = os.path.expanduser('~')
+            labels_dir = homedir+"/Library/Preferences/DeepSegments/preferences.p"
+            text_file = open(labels_dir, 'w')
+        else:
+            text_file = open(self.resource_path('preferences.txt'), mode='w')
+        # input = self.T.get("1.0", 'end-1c')
+        # text_file.write(input)
+        # text_file.close()
+
+        self.preferences[0] = str(self.suggest_mode.get())
+        self.preferences[1] = str(self.num_of_segments)
 
 
+        for line in self.preferences:
+            text_file.write(line+"\n")
+        text_file.close()
     """
     MOUSE EVENTS
     """
@@ -483,8 +534,31 @@ class GUI:
         self.advanced_buttons_frame.pack(fill=BOTH, expand=False, pady=(0, 10))
 
     def generate_colors_classes(self):
+        # if on mac store preferences in the library
+        if platform.system() == "Darwin":
+            homedir = os.path.expanduser('~')
+            my_file = homedir+"/Library/Preferences/DeepSegments/classlabels.p"
+            file_exists = os.path.isfile(my_file)
+            if not file_exists:
+                # if the folder doesn't exist create it
+                if not os.path.isdir(homedir+"/Library/Preferences/DeepSegments/"):
+                    os.makedirs(homedir+"/Library/Preferences/DeepSegments/")
+                # if the file doesn't exist create it and default it to the default classes
+                f2 = open(my_file, 'x')
+                default_classes = open(self.resource_path('classlabels.txt'))
+                def_class_labels = default_classes.readlines()
+                for x in def_class_labels:
+                    f2.write(x)
+                default_classes.close()
+                f2.close()
+
+            file = open(my_file)
+        else:
+            file = open(self.resource_path('classlabels.txt'))
+
+
         #set up classes
-        file = open(self.resource_path('classlabels.txt'))
+
         all_class_labels = file.readlines()
         self.theclasslabels = []
         for x in all_class_labels:
@@ -530,16 +604,20 @@ class GUI:
         else:
             self.image_id = self.canvas.create_image(self.canvas.winfo_width() / 2, self.canvas.winfo_height() / 2, image=d_image, anchor=CENTER)
         gc.collect()
+
+    def limit_size_segment_number(self, *args):
+        value = self.segments_value.get()
+        if len(value) > 4: self.segments_value.set(value[:4])
+        try:
+            value = int(value)
+            self.num_of_segments = value
+            self.save_preferences()
+        except ValueError:
+            self.segments_value.set(value[:len(value) - 1])
     """
     BUTTON EVENTS
     """
-    def inc_size(self):
-        self.size_adjust += 1
-        self.size_amount.config(text=self.size_adjust)
 
-    def dec_size(self):
-        self.size_adjust -= 1
-        self.size_amount.config(text=self.size_adjust)
     # LOAD FILE
     def pick_file(self):
         new_name = fd.askopenfilename()
@@ -633,7 +711,13 @@ class GUI:
     # close classlabels menu and save variables - then update interface
     def set_focus_to_main_classlabels(self):
         #write changes to txt file
-        text_file = open(self.resource_path('classlabels.txt'),mode='w')
+
+        if platform.system() == "Darwin":
+            homedir = os.path.expanduser('~')
+            labels_dir = homedir+"/Library/Preferences/DeepSegments/classlabels.p"
+            text_file = open(labels_dir, 'w')
+        else:
+            text_file = open(self.resource_path('classlabels.txt'), mode='w')
         input = self.T.get("1.0", 'end-1c')
         text_file.write(input)
         text_file.close()
@@ -695,33 +779,56 @@ class GUI:
                 for x in self.cleanup:
                     self.color_superpixel(x[0], x[1], (255, 255, 255))
             #self.zoom_image()
-
+    annotated = []
     def color_superpixel(self, x, y, color):
-        # we have to reverse since OPENCV is BGR
-        # if that area is already the right color, do nothing
-        # else paint it the color
-
         label = self.segments[x,y]
         locs = np.argwhere(self.segments == label)
+        # if not marked before
         if list(self.mat_mask[x,y]) == [255,255,255]:
+            self.annotated.append(label)
             for i in locs:
                 self.mat_mask[i[0],i[1]] = color
-                self.mat_annotated[i[0],i[1]] = color[0:3]
-        # If the the color passed in is white then we are clearing
+                self.mat_annotated[i[0],i[1]] = color
+        # If the the color passed in is white then we are removing
         elif color == (255,255,255):
+            self.annotated.remove(label)
             for i in locs:
                 self.mat_mask[i[0],i[1]] = color
                 self.mat_annotated[i[0],i[1]] = self.mat_original[i[0],i[1]]
         else:
-                # if its already colored and we have a new color
-                if list(self.mat_annotated[x,y]) != color:
-                    # then it has been marked before as a different color, remove
-                    #print("WE MAY NEED TO SEGMENT MORE", x,y)
-                    for i in locs:
-                        self.mat_mask[i[0], i[1]] = color
-                        self.mat_annotated[i[0], i[1]] = color[0:3]
-                    self.cleanup.append([x,y])
+            if label in self.annotated:
+                self.cleanup.append([x, y])
+            # if its already been colored
+            self.annotated.append(label)
+            for i in locs:
+                self.mat_mask[i[0], i[1]] = color
+                self.mat_annotated[i[0], i[1]] = color
+        self.run_unsupervised(label, color)
         self.redraw_boundary()
+
+    def run_unsupervised(self,label, color):
+        if self.suggest_mode.get() == 1: # if UNSUPERVISED
+            if label in self.valid_patches:
+                cluster_num = self.cluster_num[self.valid_patches.index(label)] # we get the label number, get its lcation in patches and then get the corresponding cluster num
+                for idx in range(0, len(self.cluster_num)): # for each superpixel
+                    if self.cluster_num[idx] == cluster_num: # if it is in our cluster
+                        place = np.argwhere(self.segments == self.valid_patches[idx]) # get its locs
+                        xy = place[0]
+                        x_center, y_center = place.sum(0) / len(place)  # get center
+                        if color == (255, 255, 255):
+                            for i in place:
+                                self.mat_mask[i[0], i[1]] = color
+                                self.mat_annotated[i[0], i[1]] = self.mat_original[i[0], i[1]]
+                        elif list(self.mat_mask[xy[0], xy[1]]) == [255, 255, 255]:
+                            cv2.circle(self.mat_annotated, (int(y_center), int(x_center)), 12, color, -1)
+                            for i in place:
+                                self.mat_mask[i[0], i[1]] = color
+                        elif self.valid_patches[idx] in self.annotated:
+                            pass
+                        elif list(self.mat_mask[xy[0], xy[1]]) != color:
+                            for i in place:
+                                self.mat_mask[i[0], i[1]] = color
+                            cv2.circle(self.mat_annotated, (int(y_center), int(x_center)), 12, color, -1)
 
     def redraw_boundary(self):
         self.mat_annotated[np.where(self.boundary == True)] = [255, 0, 0]
@@ -739,7 +846,31 @@ class GUI:
             feats[k, 1] = filtered.var()
         return feats
 
-    def mark_suggestions(self,numSegments):
+    def mark_suggestions_unsupervised(self, numSegments):
+        image_dateset = []  # for unsupervised only
+        # for each segment
+        for i in range(0, numSegments):
+            # get the segment locations
+            locs = np.argwhere(self.segments == i)
+            mask = np.zeros((self.segments.shape[0], self.segments.shape[1]), dtype=np.uint8)
+            # if valid segment (is this neccesary?)
+            if len(locs) > 0:
+                for x in locs:
+                    mask[x[0], x[1]] = 255
+
+                histb = cv2.calcHist([self.mat_original], [0], mask, [256], [0, 256])
+                # histg = cv2.calcHist([self.mat_original], [1], mask, [256], [0, 256])
+                # histr = cv2.calcHist([self.mat_original], [2], mask, [256], [0, 256])
+                # hist = np.concatenate((histb, histg, histr))
+
+                self.valid_patches.append(i)
+                image_dateset = np.append(image_dateset, histb)
+
+        kmeans = KMeans(n_clusters=len(self.theclasslabels) * 3, random_state=0, max_iter=500, n_init=15).fit(np.reshape(image_dateset, (-1, 256)))
+        # np.savetxt("foo.csv", np.reshape(self.image_dateset,(-1, 864)), delimiter=",")
+        self.cluster_num = kmeans.labels_
+
+    def mark_suggestions(self, numSegments):
         # set patch radii for gabor filter bank
         small_patch_radius = 15
         patch_radius = 30
@@ -755,8 +886,8 @@ class GUI:
                     kernels.append(kernel)
         # for each segment
         for i in range(0, numSegments):
-            locs = np.argwhere(self.segments == i)
             # get the segment locations
+            locs = np.argwhere(self.segments == i)
 
             # if valid segment (is this neccesary?)
             if len(locs) > 0:
@@ -770,6 +901,7 @@ class GUI:
                 large_patch = gray_image[int(x_center) - large_patch_radius:int(x_center) + large_patch_radius, int(y_center) - large_patch_radius:int(y_center) + large_patch_radius]
                 # get color patch for histograms
                 color_patch = self.mat_original[int(x_center) - patch_radius:int(x_center) + patch_radius, int(y_center) - patch_radius:int(y_center) + patch_radius]
+
                 # if we have a valid patch sizes (no empty patches)
                 if patch.shape[0] > 10 and patch.shape[1] > 10 and small_patch.shape[1] > 10 and small_patch.shape[0] > 10 and large_patch.shape[0] > 10 and large_patch.shape[1] > 10:
                     # get gabor features from 3 patches
@@ -777,27 +909,24 @@ class GUI:
                     gabor_small = self.compute_gabor_bank(small_patch, kernels).ravel()
                     gabor_large = self.compute_gabor_bank(large_patch, kernels).ravel()
                     gabor_all = np.concatenate((gabor, gabor_small, gabor_large))
-
                     # get the blue green and red histograms and concat them for the image
                     histb = cv2.calcHist([color_patch], [0], None, [256], [0, 256])
                     histg = cv2.calcHist([color_patch], [1], None, [256], [0, 256])
                     histr = cv2.calcHist([color_patch], [2], None, [256], [0, 256])
                     hist = np.concatenate((histb, histg, histr))
-
                     # superpixel features
                     features = np.append(hist, gabor_all)
-
                     # run prediction and get accuracy
                     prediction = int(self.ran_for.predict(features.reshape(1, -1)))
                     accuracy_list = self.ran_for.predict_proba(features.reshape(1, -1))[0]
                     accuracy = accuracy_list[int(prediction) - 1]
+
                     # if above correlation threshold: color it
                     if accuracy > .6:
                         # get color based on our prediction
                         color = self.hex_to_rgb(self.label_colors[int(prediction)-1])
                         color = tuple(reversed(color))
                         color = list(color)
-
                         # get random pixel in our superpixel so we can check its color in the mask
                         xy = locs[0]
                         # don't color previously colored squares (given annotations)
@@ -824,9 +953,8 @@ class GUI:
             self.loading_image = ImageTk.PhotoImage(file=self.resource_path("loading.png"))
             self.master.after(500,self.loading_anim)
 
-
     def analysis_thread(self):
-        # RESET ANNOTATED AND MASK IMAGES
+        # RESET ANNOTATED AND MASK IMAGES and previous dataset
         self.mat_annotated = self.mat_original[:, :].copy()
         self.mat_mask = np.zeros((self.mat_original.shape[0], self.mat_original.shape[1], self.mat_original.shape[2]), dtype=np.uint8)
         # set the mask to white
@@ -836,24 +964,29 @@ class GUI:
         self.is_new = False
         self.cleanup = []
         # loop over the number of segments
-        numSegments = 280 + (self.size_adjust * 10)
+        numSegments = self.num_of_segments
 
         # SEGMENT USING EITHER SLIC OR GRAPH CUTS
         if self.which_method.get() == 1:
             self.segments = slic(self.mat_original, min_size_factor=.3, compactness=12, n_segments=numSegments, sigma=2)
         else:
             """MIN SIZE NEEDS TO BE SCALED"""
-            self.segments = felzenszwalb(self.mat_original, scale=25, min_size=2000, sigma=2)
+            min = self.mat_original.shape[0]*self.mat_original.shape[1]/numSegments
+            self.segments = felzenszwalb(self.mat_original, scale=2, min_size=int(min/5), sigma=2)
 
         # get boundary
         self.boundary = find_boundaries(self.segments, mode='thick')
         # make suggestions
-        if self.var.get():
+
+        if self.suggest_mode.get() == 1: # if UNSUPERVISED
+            self.mark_suggestions_unsupervised(numSegments)
+        elif self.suggest_mode.get() == 2: # if SUPERVISED
             if self.ran_for is None:
                 with open(self.resource_path('ranfor.pkl'), 'rb') as pickle_file:
                     self.ran_for = pickle.load(pickle_file)
             # load random forests model
             self.mark_suggestions(numSegments)
+
         # create lined
         self.mat_original_lined = self.mat_original[:, :].copy()
         self.mat_original_lined[np.where(self.boundary == True)] = [100, 100, 100]
@@ -869,14 +1002,12 @@ class GUI:
             self.redraw_boundary()
             # reset the view
             self.zoom_image()
-            print('Thread terminated', res)
         except queue.Empty:
             self.master.after(100, self.listen_for_result)
 
     def loading_anim(self):
         try:
             res = self.thread_queue.get(0)
-            print("Animation terminated",res)
             self.run_button.configure(image=self.run_image, width=18, height=18, borderwidth=0, relief=FLAT)
         except queue.Empty:
             if self.loading_image_on:
@@ -886,6 +1017,7 @@ class GUI:
                 self.loading_image_on = True
                 self.run_button.configure(image=self.loading_image, width=18, height=18, borderwidth=0, relief=FLAT)
             self.master.after(300, self.loading_anim)
+
 print("Starting DeepSegments - A Segmentation Tool for UGA")
 root = Tk()
 root.minsize(GUI.minwidth, 700)
