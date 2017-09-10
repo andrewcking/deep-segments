@@ -1,11 +1,5 @@
-Apalm
-Acerv
-Orb
-Ssid
-Past
-Gorg
-Antill
-Plexa
-Algae
-Rubble
-Sand
+samplelabel1
+samplelabel2
+samplelabel3
+samplelabel4
+samplelabel5

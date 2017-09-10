@@ -235,7 +235,7 @@ class GUI:
         if platform.system() == "Darwin":
             margins = [10,10,25,30,28,20,30,0]
         else:
-            margins = [10,20,30,35,28,50,10,15]
+            margins = [10,20,30,65,28,50,10,15]
 
         # select file
         self.load_image = ImageTk.PhotoImage(file=self.resource_path("load.png"))
