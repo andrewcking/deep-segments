@@ -138,6 +138,7 @@ class GUI:
         self.master = master
         # the mode for suggesting
         self.suggest_mode = IntVar()
+        self.which_method = IntVar()
 
         self.load_preferences()
         print(self.preferences)
@@ -281,12 +282,10 @@ class GUI:
         zoom_out.pack(padx=margins[7], pady=(0, 10), side=RIGHT)
 
         # SLIC or GRAPH CUTS
-        self.which_method = IntVar()
-        self.which_method.set(int(self.preferences[0]))
-        graph_button = Radiobutton(self.buttons_frame, variable=self.which_method, value=2, background=self.advanced_color)
+        graph_button = Radiobutton(self.buttons_frame, variable=self.which_method, value=2, background=self.advanced_color, command=self.save_preferences)
         graph_button.pack(side=RIGHT, padx=(30, 50),pady=(0, 10))
 
-        slic_button = Radiobutton(self.buttons_frame, variable=self.which_method, value=1, background=self.advanced_color)
+        slic_button = Radiobutton(self.buttons_frame, variable=self.which_method, value=1, background=self.advanced_color, command=self.save_preferences)
         slic_button.pack(side=RIGHT, padx=0,pady=(0, 10))
 
         # Annotation Suggestions?
@@ -375,6 +374,7 @@ class GUI:
 
         self.preferences = file.readlines()
         self.suggest_mode.set(int(self.preferences[0]))
+        self.which_method.set(int(self.preferences[2]))
         file.close()
     def save_preferences(self):
         if platform.system() == "Darwin":
@@ -386,10 +386,9 @@ class GUI:
         # input = self.T.get("1.0", 'end-1c')
         # text_file.write(input)
         # text_file.close()
-
         self.preferences[0] = str(self.suggest_mode.get())
         self.preferences[1] = str(self.num_of_segments)
-
+        self.preferences[2] = str(self.which_method.get())
 
         for line in self.preferences:
             text_file.write(line+"\n")
