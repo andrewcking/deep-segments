@@ -70,7 +70,7 @@ class GUI:
     """
     BOOLEANS
     """
-    # which image is displaying false= no circles
+    # which image is displaying false= no annotations
     toggle = False
     # are we displaying the splash image?
     splash = True
@@ -115,8 +115,10 @@ class GUI:
     """
     # stores current filename
     filename = None
-
-
+    # keeps track of expert marked superpixels so the unsupervised doesn't write overthem
+    annotated = []
+    # size of suggestion circles (changed in analysis based on image size)
+    circle_size = 12
     # this lets us know which pixels to remove if any
     cleanup = []
 
@@ -141,7 +143,6 @@ class GUI:
         self.which_method = IntVar()
 
         self.load_preferences()
-        print(self.preferences)
         self.generate_colors_classes()
 
         """
@@ -383,9 +384,6 @@ class GUI:
             text_file = open(labels_dir, 'w')
         else:
             text_file = open(self.resource_path('preferences.txt'), mode='w')
-        # input = self.T.get("1.0", 'end-1c')
-        # text_file.write(input)
-        # text_file.close()
         self.preferences[0] = str(self.suggest_mode.get())
         self.preferences[1] = str(self.num_of_segments)
         self.preferences[2] = str(self.which_method.get())
@@ -660,7 +658,7 @@ class GUI:
         if self.mat_mask is not None:
             cv2.imwrite(self.filename[:-4]+"_mask.png", self.mat_mask)
 
-    # TOGGLE CIRCLES
+    # TOGGLE ANNOTATED
     def toggle_image(self, *event):
         if not self.splash:
             if not self.is_new:
@@ -763,22 +761,15 @@ class GUI:
             csv = np.genfromtxt(path, delimiter='\t')
             self.toggle = True
             for i in csv:
-                # color = colorsys.hsv_to_rgb(float(0.09 * (i[2] - 1)), float(0.5), float(1.0))
-                # color = list(color)
-                # color = tuple(reversed(color))
-                # color = [int(x * 255) for x in color]
                 color = self.hex_to_rgb(self.label_colors[int(i[2]) -1])
                 color = tuple(reversed(color))
                 color = list(color)
                 self.color_superpixel(int(i[1]), int(i[0]), color)
-                # print(i[2],color)
-                # cv2.circle(self.mat_annotated, (int(i[0] / 2), int(i[1] / 2)), 5, color, cv2.FILLED, 8, 0)
-                # cv2.circle(self.mat_mask, (int(i[0] / 2), int(i[1] / 2)), 5, color, cv2.FILLED, 8, 0)
             if self.cleanup != []:
                 for x in self.cleanup:
                     self.color_superpixel(x[0], x[1], (255, 255, 255))
             #self.zoom_image()
-    annotated = []
+
     def color_superpixel(self, x, y, color):
         label = self.segments[x,y]
         locs = np.argwhere(self.segments == label)
@@ -819,7 +810,7 @@ class GUI:
                                 self.mat_mask[i[0], i[1]] = color
                                 self.mat_annotated[i[0], i[1]] = self.mat_original[i[0], i[1]]
                         elif list(self.mat_mask[xy[0], xy[1]]) == [255, 255, 255]:
-                            cv2.circle(self.mat_annotated, (int(y_center), int(x_center)), 12, color, -1)
+                            cv2.circle(self.mat_annotated, (int(y_center), int(x_center)), self.circle_size, color, -1)
                             for i in place:
                                 self.mat_mask[i[0], i[1]] = color
                         elif self.valid_patches[idx] in self.annotated:
@@ -827,7 +818,7 @@ class GUI:
                         elif list(self.mat_mask[xy[0], xy[1]]) != color:
                             for i in place:
                                 self.mat_mask[i[0], i[1]] = color
-                            cv2.circle(self.mat_annotated, (int(y_center), int(x_center)), 12, color, -1)
+                            cv2.circle(self.mat_annotated, (int(y_center), int(x_center)), self.circle_size, color, -1)
 
     def redraw_boundary(self):
         self.mat_annotated[np.where(self.boundary == True)] = [255, 0, 0]
@@ -932,15 +923,9 @@ class GUI:
                         if list(self.mat_mask[xy[0], xy[1]]) == [255, 255, 255]:
                             # color superpixel a transparent shade
                             for i in locs:
-                                # currentBGR = self.mat_original[i[0], i[1]]
-                                # newB = currentBGR[0] + (color[0] - currentBGR[0]) * .6
-                                # newG = currentBGR[1] + (color[1] - currentBGR[1]) * .6
-                                # newR = currentBGR[2] + (color[2] - currentBGR[2]) * .6
-                                # new_color = (newB,newG,newR)
                                 self.mat_mask[i[0],i[1]] = color
-                                #self.mat_annotated[i[0], i[1]] = new_color[0:3]
                             # draw filled circle at superpixel centroid
-                            cv2.circle(self.mat_annotated, (int(y_center), int(x_center)), 12, tuple(color), -1)
+                            cv2.circle(self.mat_annotated, (int(y_center), int(x_center)), self.circle_size, tuple(color), -1)
 
     def run_analysis(self):
         if not self.splash:
@@ -964,7 +949,8 @@ class GUI:
         self.cleanup = []
         # loop over the number of segments
         numSegments = self.num_of_segments
-
+        self.circle_size = int((np.sqrt(self.mat_annotated.shape[0] * self.mat_annotated.shape[1]) / numSegments) * 1.65)
+        if self.circle_size < 4: self.circle_size = 4
         # SEGMENT USING EITHER SLIC OR GRAPH CUTS
         if self.which_method.get() == 1:
             self.segments = slic(self.mat_original, min_size_factor=.3, compactness=12, n_segments=numSegments, sigma=2)
