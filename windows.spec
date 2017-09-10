@@ -1,7 +1,7 @@
 # -*- mode: python -*-
 a = Analysis(['main.py'],
              pathex=['C:\\Users\\Andrew\\PycharmProjects\\DeepSegments'],
-             datas=[('loading.png', '.'),('circle.png', '.'),('color.png', '.'),('list.png', '.'),('load.png', '.'),('minus.png', '.'),('plus.png', '.'),('run.png', '.'),('save.png', '.'),('splash_mini.png', '.'),('splash.png', '.'),('zoomin.png', '.'),('zoomout.png', '.'),('classlabels.txt', '.'),('preferences.txt', '.'),('ranfor.pkl', '.')],
+             datas=[('loading.png', '.'),('circle.png', '.'),('color.png', '.'),('list.png', '.'),('load.png', '.'),('minus.png', '.'),('plus.png', '.'),('run.png', '.'),('save.png', '.'),('splash_mini.png', '.'),('splash.png', '.'),('zoomin.png', '.'),('zoomout.png', '.'),('mkl_avx2.dll', '.'),('mkl_def.dll', '.'),('classlabels.txt', '.'),('preferences.txt', '.'),('ranfor.pkl', '.')],
              hiddenimports=['pywt._extensions._cwt'],
              hookspath=None,
              runtime_hooks=None,
