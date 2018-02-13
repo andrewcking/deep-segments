@@ -24,7 +24,7 @@ You can toggle the segmentation overlay with the 'Toggle Segment' button and you
 
 
 ## Dependencies
-The project was built with the following. In all likelihood it will still work with newer versions but no guarantees.
+The project was built with the following. In all likelihood it will still work with newer versions but no guarantees. I would advise that you use the listed version of TK due to some compatability issues with the latest version of Mac OS.
 
 Python 3.5
 
@@ -37,3 +37,5 @@ Scikit-image 0.13
 Scikit-learn 0.18.1
 
 Pyinstaller 3.2.1
+
+tk 8.5.19
